@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { BbPluginApi } from "@bb/plugin-sdk";
 import {
   CAPS,
+  captureThread,
   claudeProjectSlug,
   clip,
   deriveHomeDir,
@@ -80,6 +82,44 @@ function claudeStyleEvents(): EventRowLike[] {
     { seq: 12, type: "turn/completed", data: { status: "failed", error: { message: "rate limited" } } },
   ];
 }
+
+describe("captureThread pagination", () => {
+  it.each([0, 1, 100, 205])("captures all messages from %i events within the server page limit", async (count) => {
+    type ListEvents = BbPluginApi["sdk"]["threads"]["events"]["list"];
+    const events = Array.from({ length: count }, (_, index) => ({
+      id: `evt_${index}`,
+      threadId: "thr_1",
+      scope: { kind: "thread" },
+      seq: index * 2 + 1,
+      createdAt: index,
+      type: "item/completed",
+      data: {
+        providerThreadId: "session_1",
+        item: { id: `msg_${index}`, type: "agentMessage", text: `Message ${index}` },
+      },
+    } satisfies Awaited<ReturnType<ListEvents>>[number]));
+    const list = vi.fn<ListEvents>(async ({ afterSeq, limit }) => {
+      const pageSize = Number(limit);
+      if (pageSize > 100) throw new Error("Thread event limit cannot exceed 100");
+      return events.filter((event) => event.seq > Number(afterSeq ?? 0)).slice(0, pageSize);
+    });
+    const bb = {
+      sdk: {
+        threads: {
+          get: async () => ({ id: "thr_1", providerId: "codex", environmentId: null }),
+          events: { list },
+          output: async () => ({ output: "Done." }),
+        },
+      },
+    } as unknown as BbPluginApi;
+
+    const captured = await captureThread(bb, "thr_1");
+
+    expect(captured.eventCount).toBe(count);
+    expect(captured.entries.map((entry) => entry.body)).toEqual(events.map((event) => event.data.item.text));
+    expect(list).toHaveBeenCalledTimes(Math.floor(count / 100) + 1);
+  });
+});
 
 describe("projectEvents", () => {
   it("projects a full session into ordered transcript entries", () => {
