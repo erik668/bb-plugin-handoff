@@ -346,7 +346,9 @@ export async function captureThread(
     })) as unknown as EventRowLike[];
     const scoped = untilSeq != null ? page.filter((row) => row.seq <= untilSeq) : page;
     rows.push(...scoped);
-    if (page.length < EVENT_PAGE_SIZE) break;
+    // Stop only on an empty page: the server may cap pages below the requested
+    // limit, so a short page does not prove the stream is exhausted.
+    if (page.length === 0) break;
     // A page that reached past the cutoff means nothing relevant comes after.
     if (untilSeq != null && scoped.length < page.length) break;
     afterSeq = String(page[page.length - 1]!.seq);

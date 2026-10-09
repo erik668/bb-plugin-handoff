@@ -84,7 +84,13 @@ function claudeStyleEvents(): EventRowLike[] {
 }
 
 describe("captureThread pagination", () => {
-  it.each([0, 1, 100, 205])("captures all messages from %i events within the server page limit", async (count) => {
+  it.each([
+    { count: 0, serverCap: 100 },
+    { count: 1, serverCap: 100 },
+    { count: 100, serverCap: 100 },
+    { count: 205, serverCap: 100 },
+    { count: 205, serverCap: 50 },
+  ])("captures all $count events when the server caps pages at $serverCap", async ({ count, serverCap }) => {
     type ListEvents = BbPluginApi["sdk"]["threads"]["events"]["list"];
     const events = Array.from({ length: count }, (_, index) => ({
       id: `evt_${index}`,
@@ -101,7 +107,7 @@ describe("captureThread pagination", () => {
     const list = vi.fn<ListEvents>(async ({ afterSeq, limit }) => {
       const pageSize = Number(limit);
       if (pageSize > 100) throw new Error("Thread event limit cannot exceed 100");
-      return events.filter((event) => event.seq > Number(afterSeq ?? 0)).slice(0, pageSize);
+      return events.filter((event) => event.seq > Number(afterSeq ?? 0)).slice(0, Math.min(pageSize, serverCap));
     });
     const bb = {
       sdk: {
@@ -117,7 +123,7 @@ describe("captureThread pagination", () => {
 
     expect(captured.eventCount).toBe(count);
     expect(captured.entries.map((entry) => entry.body)).toEqual(events.map((event) => event.data.item.text));
-    expect(list).toHaveBeenCalledTimes(Math.floor(count / 100) + 1);
+    expect(list).toHaveBeenCalledTimes(Math.ceil(count / serverCap) + 1);
   });
 });
 
