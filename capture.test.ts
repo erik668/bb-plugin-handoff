@@ -127,6 +127,36 @@ describe("captureThread pagination", () => {
   });
 });
 
+describe("captureThread paging guards", () => {
+  type ListEvents = BbPluginApi["sdk"]["threads"]["events"]["list"];
+  const event = (seq: number) => ({
+    id: `evt_${seq}`, threadId: "thr_1", scope: { kind: "thread" }, seq, createdAt: seq, type: "item/completed",
+    data: { providerThreadId: "session_1", item: { id: `msg_${seq}`, type: "agentMessage", text: `Message ${seq}` } },
+  } satisfies Awaited<ReturnType<ListEvents>>[number]);
+  const api = (list: ListEvents) => ({
+    sdk: { threads: {
+      get: async () => ({ id: "thr_1", providerId: "codex", environmentId: null }),
+      events: { list },
+      output: async () => ({ output: "Done." }),
+    } },
+  } as unknown as BbPluginApi);
+
+  it("stops at untilSeq inside a later capped page", async () => {
+    const events = Array.from({ length: 120 }, (_, index) => event(index + 1));
+    const list = vi.fn<ListEvents>(async ({ afterSeq }) =>
+      events.filter((row) => row.seq > Number(afterSeq ?? 0)).slice(0, 50));
+    const captured = await captureThread(api(list), "thr_1", { untilSeq: 75 });
+    expect(captured.eventCount).toBe(75);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails instead of looping when the server ignores the cursor", async () => {
+    const list = vi.fn<ListEvents>(async () => [event(1), event(2)]);
+    await expect(captureThread(api(list), "thr_1")).rejects.toThrow("did not advance");
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("projectEvents", () => {
   it("projects a full session into ordered transcript entries", () => {
     const { entries, providerThreadId, turns } = projectEvents(claudeStyleEvents());

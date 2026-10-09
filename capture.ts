@@ -351,7 +351,12 @@ export async function captureThread(
     if (page.length === 0) break;
     // A page that reached past the cutoff means nothing relevant comes after.
     if (untilSeq != null && scoped.length < page.length) break;
-    afterSeq = String(page[page.length - 1]!.seq);
+    const lastSeq = page[page.length - 1]!.seq;
+    // A cursor that does not advance would page forever.
+    if (afterSeq !== undefined && lastSeq <= Number(afterSeq)) {
+      throw new Error("Thread event paging did not advance.");
+    }
+    afterSeq = String(lastSeq);
   }
 
   const { entries, providerThreadId, turns } = projectEvents(rows);
