@@ -6,6 +6,7 @@ import {
   claudeProjectSlug,
   clip,
   deriveHomeDir,
+  findNativeSessionPath,
   projectEvents,
   type EventRowLike,
 } from "./capture";
@@ -225,6 +226,48 @@ describe("native session discovery helpers", () => {
     expect(claudeProjectSlug("/Users/dev/.bb/personal-workspaces/env_d699ce8g2z")).toBe(
       "-Users-dev--bb-personal-workspaces-env-d699ce8g2z",
     );
+  });
+});
+
+describe("findNativeSessionPath", () => {
+  type ListFiles = BbPluginApi["sdk"]["files"]["list"];
+  const api = (paths: string[]) => {
+    const list = vi.fn<ListFiles>(async () => ({
+      files: paths.map((path) => ({ name: path.slice(path.lastIndexOf("/") + 1), path })),
+      truncated: false,
+    }));
+    return { list, bb: { sdk: { files: { list } } } as unknown as BbPluginApi };
+  };
+  const query = (providerId: string) => ({
+    providerId, providerThreadId: "abc-123", hostId: "host_1", workspacePath: "/Users/dev/work",
+  });
+
+  it("picks the Claude Code main transcript over subagent transcripts listed first", async () => {
+    const { bb } = api(["abc-123/subagents/agent-a1.jsonl", "abc-123/subagents/agent-a2.jsonl", "abc-123.jsonl"]);
+    expect(await findNativeSessionPath(bb, query("claude-code"))).toBe(
+      "/Users/dev/.claude/projects/-Users-dev-work/abc-123.jsonl",
+    );
+  });
+
+  it("returns null when only subagent transcripts match", async () => {
+    const { bb } = api(["abc-123/subagents/agent-a1.jsonl"]);
+    expect(await findNativeSessionPath(bb, query("claude-code"))).toBeNull();
+  });
+
+  it("matches the Codex rollout whose id suffix is exact", async () => {
+    const { bb } = api([
+      "2026/10/09/rollout-2026-10-09T01-00-00-xabc-123.jsonl",
+      "2026/10/09/rollout-2026-10-09T02-00-00-abc-123.jsonl",
+    ]);
+    expect(await findNativeSessionPath(bb, query("codex"))).toBe(
+      "/Users/dev/.codex/sessions/2026/10/09/rollout-2026-10-09T02-00-00-abc-123.jsonl",
+    );
+  });
+
+  it("skips the listing for providers without a known session layout", async () => {
+    const { bb, list } = api(["abc-123.jsonl"]);
+    expect(await findNativeSessionPath(bb, query("gemini"))).toBeNull();
+    expect(list).not.toHaveBeenCalled();
   });
 });
 

@@ -253,31 +253,42 @@ export async function findNativeSessionPath(
   if (!providerThreadId || !workspacePath) return null;
   const home = deriveHomeDir(workspacePath);
   if (!home) return null;
+  // The listing is a recursive fuzzy search, so it also returns files that
+  // merely sit under a directory named for the session (Claude Code keeps
+  // subagent transcripts in <session-id>/subagents/). Match the exact name.
+  const target = nativeSessionTarget(providerId, home, workspacePath, providerThreadId);
+  if (!target) return null;
   try {
-    if (providerId === "claude-code") {
-      const dir = `${home}/.claude/projects/${claudeProjectSlug(workspacePath)}`;
-      const listing = await bb.sdk.files.list({ hostId, path: dir, query: providerThreadId, limit: 5 });
-      const hit = pickJsonl(listing, providerThreadId);
-      return hit ? `${dir}/${hit}` : null;
-    }
-    if (providerId === "codex") {
-      const dir = `${home}/.codex/sessions`;
-      const listing = await bb.sdk.files.list({ hostId, path: dir, query: providerThreadId, limit: 5 });
-      const hit = pickJsonl(listing, providerThreadId);
-      return hit ? `${dir}/${hit}` : null;
-    }
+    const listing = await bb.sdk.files.list({ hostId, path: target.dir, query: providerThreadId, limit: 100 });
+    const hit = listing.files.find((file) => target.matches(file.path));
+    return hit ? `${target.dir}/${hit.path}` : null;
   } catch {
     return null;
   }
-  return null;
 }
 
-function pickJsonl(listing: unknown, sessionId: string): string | null {
-  // deno-lint-ignore no-explicit-any
-  const files: any[] = Array.isArray(listing) ? listing : ((listing as any)?.files ?? (listing as any)?.entries ?? []);
-  for (const file of files) {
-    const path: string | undefined = typeof file === "string" ? file : file?.path ?? file?.relativePath;
-    if (path && path.includes(sessionId) && path.endsWith(".jsonl")) return path;
+function nativeSessionTarget(
+  providerId: string,
+  home: string,
+  workspacePath: string,
+  sessionId: string,
+): { dir: string; matches: (relativePath: string) => boolean } | null {
+  if (providerId === "claude-code") {
+    // <projects>/<cwd-slug>/<session-id>.jsonl, directly in the project dir.
+    return {
+      dir: `${home}/.claude/projects/${claudeProjectSlug(workspacePath)}`,
+      matches: (relativePath) => relativePath === `${sessionId}.jsonl`,
+    };
+  }
+  if (providerId === "codex") {
+    // <sessions>/YYYY/MM/DD/rollout-<timestamp>-<session-id>.jsonl
+    return {
+      dir: `${home}/.codex/sessions`,
+      matches: (relativePath) => {
+        const base = relativePath.slice(relativePath.lastIndexOf("/") + 1);
+        return base.startsWith("rollout-") && base.endsWith(`-${sessionId}.jsonl`);
+      },
+    };
   }
   return null;
 }
